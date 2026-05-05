@@ -1,0 +1,74 @@
+[
+  {
+    "id": "Y001",
+    "name": "Ocean Pearl 52",
+    "builder": "Prestige",
+    "year": 2021,
+    "price": 1250000,
+    "length_ft": 52,
+    "location": "Fort Lauderdale, FL",
+    "cabins": 3,
+    "features": ["flybridge", "family-friendly", "modern interior", "low engine hours"],
+    "description": "A family-friendly motor yacht with a spacious salon, flybridge, and modern finishes."
+  },
+  {
+    "id": "Y002",
+    "name": "Mariner Blue 48",
+    "builder": "Azimut",
+    "year": 2019,
+    "price": 980000,
+    "length_ft": 48,
+    "location": "Miami, FL",
+    "cabins": 2,
+    "features": ["sport cruiser", "sleek design", "entertaining space"],
+    "description": "A sleek sport cruiser designed for day trips, entertaining, and coastal cruising."
+  },
+  {
+    "id": "Y003",
+    "name": "Harbor Majesty 65",
+    "builder": "Sunseeker",
+    "year": 2020,
+    "price": 2400000,
+    "length_ft": 65,
+    "location": "Palm Beach, FL",
+    "cabins": 4,
+    "features": ["luxury", "crew quarters", "large aft deck", "premium finishes"],
+    "description": "A luxury yacht with generous entertaining areas, crew quarters, and premium finishes."
+  },
+  {
+    "id": "Y004",
+    "name": "Coastal Runner 44",
+    "builder": "Sea Ray",
+    "year": 2018,
+    "price": 725000,
+    "length_ft": 44,
+    "location": "Tampa, FL",
+    "cabins": 2,
+    "features": ["weekend cruiser", "easy handling", "family-friendly"],
+    "description": "A practical weekend cruiser with comfortable accommodations and easy handling."
+  },
+  {
+    "id": "Y005",
+    "name": "Island Grace 58",
+    "builder": "Princess",
+    "year": 2022,
+    "price": 1750000,
+    "length_ft": 58,
+    "location": "Naples, FL",
+    "cabins": 3,
+    "features": ["flybridge", "luxury interior", "long-range cruising", "entertaining space"],
+    "description": "A refined flybridge yacht suited for extended trips, entertaining, and comfortable cruising."
+  },
+  {
+    "id": "Y006",
+    "name": "Northern Star 50",
+    "builder": "Galeon",
+    "year": 2020,
+    "price": 1150000,
+    "length_ft": 50,
+    "location": "Newport, RI",
+    "cabins": 3,
+    "features": ["beach mode", "modern layout", "family-friendly"],
+    "description": "A modern yacht with expandable side decks, comfortable cabins, and a versatile layout."
+  }
+]
