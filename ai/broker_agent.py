@@ -58,8 +58,6 @@ SEARCH_YACHTS_TOOL = {
                 "description": "Minimum number of cabins, or null if not specified.",
             },
         },
-        # With strict schemas, we list all possible fields as required.
-        # Nullable fields can still be null when the user did not specify them.
         "required": [
             "max_price",
             "min_length",
@@ -90,6 +88,43 @@ def _run_search_yachts_tool(arguments: dict) -> list[dict]:
     )
 
 
+def _build_no_tool_response(customer_request: str) -> dict:
+    """
+    Return a safe fallback response if the model does not call the yacht search tool.
+    """
+
+    return {
+        "request_summary": "The request could not be processed through the yacht search tool.",
+        "customer_profile": {
+            "name": None,
+            "budget": None,
+            "location_preference": None,
+            "size_preference": None,
+            "cabin_preference": None,
+            "intended_use": None,
+        },
+        "matched_yachts": [],
+        "broker_notes": [
+            "The model did not call the search_yachts tool.",
+            "Try making the request more direct, such as: 'Use the yacht search tool to find yachts under $1.5M in Florida between 45 and 60 feet.'",
+        ],
+        "follow_up_questions": [
+            "What is the customer's budget?",
+            "What yacht length range is the customer considering?",
+            "What location should the search focus on?",
+            "How many cabins does the customer need?",
+        ],
+        "draft_customer_email": "",
+        "requires_approval": True,
+        "approval_reason": "No customer-facing email should be sent until the broker reviews the request and search results.",
+        "status": "needs_broker_review",
+        "original_customer_request": customer_request,
+        "used_tool_calling": False,
+        "tool_calls_used": [],
+        "raw_tool_results": [],
+    }
+
+
 def run_broker_agent(customer_request: str) -> dict:
     """
     Run a simple tool-calling yacht broker agent.
@@ -102,22 +137,24 @@ def run_broker_agent(customer_request: str) -> dict:
         5. Ask the model to return a structured final response.
     """
 
-    model = os.getenv("OPENAI_MODEL", "gpt-5.5")
+    model = os.getenv("OPENAI_MODEL", "gpt-5-mini")
 
     instructions = """
     You are a yacht broker assistant for a SaaS MLS proof of concept.
 
     Your job:
     - Help brokers respond to customer yacht search requests.
-    - Use the search_yachts tool when the user asks for yacht options.
-    - After tool results are available, recommend relevant matches.
-    - Draft a customer-facing email.
+    - Use the search_yachts tool whenever the user asks for yacht recommendations, available options, or matching listings.
+    - Do not invent yacht listings. Only recommend yachts returned by the search_yachts tool.
+    - If the user request is vague, still use the tool with the filters you can identify and use null for missing filters.
+    - After tool results are available, create a practical broker-facing response.
+    - Include broker notes and follow-up questions.
+    - Draft a customer-facing email only as a draft.
     - Do not claim that an email has been sent.
     - Always require human approval before sending customer-facing text.
+    - Be honest about missing information and limitations.
     """
 
-    # This is the first model request.
-    # The model can either answer directly or request a tool call.
     input_list = [
         {
             "role": "user",
@@ -125,6 +162,8 @@ def run_broker_agent(customer_request: str) -> dict:
         }
     ]
 
+    # First model call:
+    # The model receives the user's request and can choose to call search_yachts.
     first_response = client.responses.create(
         model=model,
         instructions=instructions,
@@ -133,19 +172,18 @@ def run_broker_agent(customer_request: str) -> dict:
     )
 
     # Add the model's first output to the conversation.
-    # If the model requested a function call, that function call is in first_response.output.
     input_list += first_response.output
 
     tool_calls_used = []
     raw_tool_results = []
 
-    # Look through the model output for function/tool calls.
+    # Look through the first response for function/tool calls.
     for item in first_response.output:
         if item.type == "function_call" and item.name == "search_yachts":
             # The model sends tool arguments as a JSON string.
             arguments = json.loads(item.arguments)
 
-            # Run the actual local Python tool.
+            # Run the actual local Python search function.
             tool_result = _run_search_yachts_tool(arguments)
 
             tool_calls_used.append(
@@ -167,23 +205,12 @@ def run_broker_agent(customer_request: str) -> dict:
                 }
             )
 
-    # If no tool was used, return a clear response instead of failing silently.
+    # If no tool was used, return a safe fallback response.
     if not tool_calls_used:
-        return {
-            "original_customer_request": customer_request,
-            "used_tool_calling": False,
-            "tool_calls_used": [],
-            "matched_yachts": [],
-            "broker_notes": [
-                "The model did not call the search_yachts tool for this request."
-            ],
-            "draft_customer_email": "",
-            "requires_approval": True,
-            "status": "needs_review",
-        }
+        return _build_no_tool_response(customer_request)
 
-    # This second model request asks the model to use the tool result
-    # and produce a final structured response.
+    # Second model call:
+    # The model now has the yacht search results and must produce a richer structured response.
     final_response = client.responses.create(
         model=model,
         instructions=instructions,
@@ -192,26 +219,95 @@ def run_broker_agent(customer_request: str) -> dict:
         text={
             "format": {
                 "type": "json_schema",
-                "name": "BrokerAgentResponse",
+                "name": "EnhancedBrokerAgentResponse",
                 "strict": True,
                 "schema": {
                     "type": "object",
                     "properties": {
+                        "request_summary": {
+                            "type": "string",
+                            "description": "A short plain-English summary of what the customer is looking for.",
+                        },
+                        "customer_profile": {
+                            "type": "object",
+                            "description": "Customer preferences extracted or inferred from the request.",
+                            "properties": {
+                                "name": {
+                                    "type": ["string", "null"],
+                                    "description": "Customer name if mentioned.",
+                                },
+                                "budget": {
+                                    "type": ["integer", "null"],
+                                    "description": "Customer budget in dollars if mentioned.",
+                                },
+                                "location_preference": {
+                                    "type": ["string", "null"],
+                                    "description": "Preferred yacht location or region.",
+                                },
+                                "size_preference": {
+                                    "type": ["string", "null"],
+                                    "description": "Preferred yacht size or size range.",
+                                },
+                                "cabin_preference": {
+                                    "type": ["string", "null"],
+                                    "description": "Preferred number of cabins.",
+                                },
+                                "intended_use": {
+                                    "type": ["string", "null"],
+                                    "description": "Intended use such as family cruising, entertaining, long-range cruising, or day trips.",
+                                },
+                            },
+                            "required": [
+                                "name",
+                                "budget",
+                                "location_preference",
+                                "size_preference",
+                                "cabin_preference",
+                                "intended_use",
+                            ],
+                            "additionalProperties": False,
+                        },
                         "matched_yachts": {
                             "type": "array",
-                            "description": "Yachts recommended to the customer.",
+                            "description": "Yachts recommended to the customer based only on tool results.",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "id": {"type": "string"},
-                                    "name": {"type": "string"},
-                                    "price": {"type": "integer"},
-                                    "length_ft": {"type": "integer"},
-                                    "location": {"type": "string"},
-                                    "cabins": {"type": "integer"},
+                                    "id": {
+                                        "type": "string",
+                                        "description": "Yacht listing ID.",
+                                    },
+                                    "name": {
+                                        "type": "string",
+                                        "description": "Yacht name.",
+                                    },
+                                    "price": {
+                                        "type": "integer",
+                                        "description": "Yacht price in dollars.",
+                                    },
+                                    "length_ft": {
+                                        "type": "integer",
+                                        "description": "Yacht length in feet.",
+                                    },
+                                    "location": {
+                                        "type": "string",
+                                        "description": "Yacht location.",
+                                    },
+                                    "cabins": {
+                                        "type": "integer",
+                                        "description": "Number of cabins.",
+                                    },
+                                    "match_score": {
+                                        "type": "number",
+                                        "description": "A rough fit score from 0 to 1 based on the customer request.",
+                                    },
                                     "reason": {
                                         "type": "string",
-                                        "description": "Why this yacht fits the request.",
+                                        "description": "Why this yacht fits the customer's request.",
+                                    },
+                                    "tradeoffs": {
+                                        "type": "string",
+                                        "description": "Any limitations or tradeoffs for this yacht.",
                                     },
                                 },
                                 "required": [
@@ -221,34 +317,53 @@ def run_broker_agent(customer_request: str) -> dict:
                                     "length_ft",
                                     "location",
                                     "cabins",
+                                    "match_score",
                                     "reason",
+                                    "tradeoffs",
                                 ],
                                 "additionalProperties": False,
                             },
                         },
                         "broker_notes": {
                             "type": "array",
-                            "items": {"type": "string"},
                             "description": "Internal notes for the broker.",
+                            "items": {
+                                "type": "string",
+                            },
+                        },
+                        "follow_up_questions": {
+                            "type": "array",
+                            "description": "Questions the broker should ask the customer before moving forward.",
+                            "items": {
+                                "type": "string",
+                            },
                         },
                         "draft_customer_email": {
                             "type": "string",
-                            "description": "Customer-facing email draft.",
+                            "description": "Customer-facing email draft. This must not claim the email was sent.",
                         },
                         "requires_approval": {
                             "type": "boolean",
-                            "description": "Whether a human must approve before sending.",
+                            "description": "Whether a human broker must approve before sending.",
+                        },
+                        "approval_reason": {
+                            "type": "string",
+                            "description": "Why human approval is required.",
                         },
                         "status": {
                             "type": "string",
-                            "description": "Workflow status.",
+                            "description": "Workflow status such as pending_broker_review or needs_more_information.",
                         },
                     },
                     "required": [
+                        "request_summary",
+                        "customer_profile",
                         "matched_yachts",
                         "broker_notes",
+                        "follow_up_questions",
                         "draft_customer_email",
                         "requires_approval",
+                        "approval_reason",
                         "status",
                     ],
                     "additionalProperties": False,

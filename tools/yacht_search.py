@@ -1,18 +1,15 @@
-# Mock yacht listings are stored in data/yachts.json.
+# json lets Python read data from a .json file.
+# Our mock yacht listings are stored in data/yachts.json.
 import json
-# Path helps build reliable file paths.
+
+# re helps us split location text like "Miami and Palm Beach".
+import re
+
+# Path helps us build reliable file paths.
 from pathlib import Path
 
 
 # This creates the full path to data/yachts.json.
-#
-# __file__ means "the current file", which is yacht_search.py.
-# .resolve() gets the full absolute path.
-# .parent gets the folder containing this file, which is tools/.
-# .parent.parent moves up one more level to the main project folder.
-#
-# Final result:
-# YACHT-AGENT-POC/data/yachts.json
 DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "yachts.json"
 
 
@@ -24,16 +21,87 @@ def load_yachts() -> list[dict]:
         A list of yacht dictionaries.
     """
 
-    # Open the JSON file in read mode.
-    # encoding="utf-8" helps Python read text safely across different systems.
     with open(DATA_FILE, "r", encoding="utf-8") as file:
-
-        # json.load(file) converts the JSON file into Python data.
-        #
-        # In this project:
-        # JSON array  -> Python list
-        # JSON object -> Python dictionary
         return json.load(file)
+
+
+def _split_location_keywords(location_text: str | None) -> list[str]:
+    """
+    Convert one location string into a list of location keywords.
+
+    Examples:
+        "Miami and Palm Beach" -> ["Miami", "Palm Beach"]
+        "Miami, Palm Beach" -> ["Miami", "Palm Beach"]
+        "Florida" -> ["Florida"]
+    """
+
+    if location_text is None:
+        return []
+
+    # Split on commas, "and", or "or".
+    raw_parts = re.split(r",|\band\b|\bor\b", location_text, flags=re.IGNORECASE)
+
+    # Clean up extra spaces and remove empty values.
+    return [part.strip() for part in raw_parts if part.strip()]
+
+
+def _build_location_keywords(
+    location_keyword: str | None = None,
+    location_keywords: list[str] | None = None,
+) -> list[str]:
+    """
+    Build one clean list of location keywords.
+
+    This keeps the old location_keyword field working while also supporting
+    the new location_keywords list.
+    """
+
+    final_keywords = []
+
+    # Support the old single-location field.
+    final_keywords.extend(_split_location_keywords(location_keyword))
+
+    # Support the new multi-location field.
+    if location_keywords:
+        for keyword in location_keywords:
+            final_keywords.extend(_split_location_keywords(keyword))
+
+    # Remove duplicates while preserving order.
+    unique_keywords = []
+
+    for keyword in final_keywords:
+        normalized = keyword.lower()
+
+        if normalized not in [item.lower() for item in unique_keywords]:
+            unique_keywords.append(keyword)
+
+    return unique_keywords
+
+
+def _location_matches(yacht_location: str, location_keywords: list[str]) -> bool:
+    """
+    Check whether a yacht location matches any of the requested locations.
+    """
+
+    # If no location filter was provided, every location is acceptable.
+    if not location_keywords:
+        return True
+
+    yacht_location_lower = yacht_location.lower()
+
+    for keyword in location_keywords:
+        keyword_lower = keyword.lower()
+
+        # Treat Florida and FL as broad Florida searches.
+        if keyword_lower in ["florida", "fl"]:
+            if "fl" in yacht_location_lower or "florida" in yacht_location_lower:
+                return True
+
+        # Otherwise, match specific city/location text.
+        elif keyword_lower in yacht_location_lower:
+            return True
+
+    return False
 
 
 def search_yachts(
@@ -41,6 +109,7 @@ def search_yachts(
     min_length: int | None = None,
     max_length: int | None = None,
     location_keyword: str | None = None,
+    location_keywords: list[str] | None = None,
     min_cabins: int | None = None,
 ) -> list[dict]:
     """
@@ -50,63 +119,41 @@ def search_yachts(
         max_price: Maximum yacht price.
         min_length: Minimum yacht length in feet.
         max_length: Maximum yacht length in feet.
-        location_keyword: A city/state/location keyword, such as "Florida" or "Miami".
+        location_keyword: Old single-location field, such as "Miami".
+        location_keywords: New multi-location field, such as ["Miami", "Palm Beach"].
         min_cabins: Minimum number of cabins.
 
     Returns:
         A list of matching yacht records.
     """
 
-    # Load all yacht records from the JSON file.
     yachts = load_yachts()
-
-    # This list will store only the yachts that match the filters.
     results = []
 
-    # Look at each yacht one at a time.
-    for yacht in yachts:
+    # Build one clean location list from both old and new inputs.
+    active_location_keywords = _build_location_keywords(
+        location_keyword=location_keyword,
+        location_keywords=location_keywords,
+    )
 
-        # If max_price was provided and this yacht is too expensive,
-        # skip it and move to the next yacht.
+    for yacht in yachts:
         if max_price is not None and yacht["price"] > max_price:
             continue
 
-        # If min_length was provided and this yacht is too short,
-        # skip it.
         if min_length is not None and yacht["length_ft"] < min_length:
             continue
 
-        # If max_length was provided and this yacht is too long,
-        # skip it.
         if max_length is not None and yacht["length_ft"] > max_length:
             continue
 
-        # If a location keyword was provided, check whether it matches
-        # the yacht's location.
-        if location_keyword is not None:
-            location_text = yacht["location"].lower()
-            keyword = location_keyword.lower()
+        if not _location_matches(yacht["location"], active_location_keywords):
+            continue
 
-            # Our data uses "FL" instead of spelling out "Florida".
-            # This lets a search for "Florida" match locations like "Miami, FL".
-            if keyword == "florida":
-                if "fl" not in location_text and "florida" not in location_text:
-                    continue
-
-            # For any other keyword, check whether it appears in the location text.
-            # Example: "Miami" should match "Miami, FL".
-            elif keyword not in location_text:
-                continue
-
-        # If min_cabins was provided and this yacht has too few cabins,
-        # skip it.
         if min_cabins is not None and yacht["cabins"] < min_cabins:
             continue
 
-        # If the yacht passed every filter above, add it to the results list.
         results.append(yacht)
 
-    # Return all yachts that matched the search.
     return results
 
 
@@ -115,18 +162,8 @@ def format_yacht_summary(yacht: dict) -> str:
     Convert a yacht dictionary into readable text for the terminal.
     """
 
-    # The features are stored as a list.
-    # Example:
-    # ["flybridge", "family-friendly", "modern interior"]
-    #
-    # This joins them into one readable string:
-    # "flybridge, family-friendly, modern interior"
     features = ", ".join(yacht["features"])
 
-    # Return one formatted block of text describing the yacht.
-    #
-    # f-strings let us insert values from the yacht dictionary directly
-    # into the text.
     return (
         f"{yacht['name']} ({yacht['year']} {yacht['builder']})\n"
         f"  ID: {yacht['id']}\n"
